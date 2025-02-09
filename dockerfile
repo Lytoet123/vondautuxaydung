@@ -1,5 +1,5 @@
-# Sử dụng image Python slim để giảm kích thước image
-FROM python:3.11-slim-buster
+# Sử dụng image Python với distutils
+FROM python:3.10-slim-buster
 
 # Cài đặt các dependencies hệ thống cần thiết (nếu có)
 # Ví dụ: libmagic cho python-magic
@@ -10,9 +10,6 @@ WORKDIR /app
 
 # Copy requirements.txt trước để tận dụng cache của Docker
 COPY requirements.txt .
-
-# Nâng cấp pip, setuptools và wheel trước
-RUN pip install --upgrade pip setuptools wheel
 
 # Cài đặt các dependencies từ requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
