@@ -1,3 +1,5 @@
+setuptools --upgrade
+wheel --upgrade
 Flask==2.3.2
 langchain[openai]==0.0.148
 PyPDF2==3.0.1
@@ -11,5 +13,3 @@ requests==2.31.0
 typing_extensions==4.5.0
 tiktoken>=0.4.0
 gunicorn==20.1.0
-setuptools
-
