@@ -17,9 +17,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code của ứng dụng
 COPY . .
 
-# Thiết lập biến môi trường (nếu cần)
-# ENV OPENAI_API_KEY=your_api_key
-
 # Expose port (nếu cần)
 EXPOSE 5000
 
