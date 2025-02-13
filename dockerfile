@@ -1,35 +1,34 @@
-# Sử dụng image Python với đầy đủ build tools
-FROM python:3.10-buster
+FROM python:3.10-slim
 
-# Cài đặt các dependencies hệ thống
-RUN apt-get update && \
-    apt-get install -y \
+# Cài đặt các dependencies hệ thống cần thiết
+RUN apt-get update && apt-get install -y \
+    build-essential \
     gcc \
     g++ \
-    libopenblas-dev \
-    python3-dev \
-    swig \
     cmake \
-    build-essential \
-    libopenblas-dev \
-    liblapack-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Tạo và kích hoạt môi trường ảo
+ENV VIRTUAL_ENV=/opt/venv
+RUN python -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Tạo thư mục làm việc
 WORKDIR /app
 
-# Copy requirements.txt trước để tận dụng cache của Docker
+# Copy và cài đặt requirements
 COPY requirements.txt .
-
-# Cài đặt các dependencies Python
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir -U pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy toàn bộ source code
+# Copy source code
 COPY . .
 
-# Expose port
-EXPOSE 5000
+# Thiết lập biến môi trường cho Railway
+ENV PORT=5000
 
-# Chạy ứng dụng với Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+# Expose port
+EXPOSE $PORT
+
+# Start command
+CMD gunicorn --bind 0.0.0.0:$PORT app:app
