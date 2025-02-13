@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.10-buster
 
 # Cài đặt các dependencies hệ thống và python3-distutils
 RUN apt-get update && apt-get install -y \
