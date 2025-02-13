@@ -8,6 +8,11 @@ RUN apt-get update && \
     g++ \
     libopenblas-dev \
     python3-dev \
+    swig \
+    cmake \
+    build-essential \
+    libopenblas-dev \
+    liblapack-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Tạo thư mục làm việc
