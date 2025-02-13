@@ -17,7 +17,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir numpy
 RUN pip install --no-cache-dir faiss-cpu==1.7.4 --index-url https://pypi.org/simple
 
-# Sau đó cài đặt các package còn lại
+# Nâng cấp openai
+RUN pip install --no-cache-dir --upgrade openai
+
+# Sau đó cài đặt các package còn lại (nếu có, sau khi đã loại bỏ openai)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy code
@@ -31,4 +34,4 @@ ENV PORT=5000
 
 EXPOSE $PORT
 
-CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "--timeout", "600", "--workers", "3", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "--timeout", "300", "--workers", "1", "app:app"]
