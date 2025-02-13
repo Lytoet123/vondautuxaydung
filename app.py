@@ -1,7 +1,5 @@
 import os
 import logging
-import hashlib
-import json
 from typing import Dict
 from functools import lru_cache
 from dotenv import load_dotenv
@@ -15,118 +13,136 @@ from flask import Flask, request, jsonify
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
 
 # Load environment variables
 load_dotenv()
-api_key = os.getenv('OPENAI_API_KEY')
-if not api_key:
-    raise ValueError("API key not found. Please check your .env file.")
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY not found in environment variables")
 
-# Initialize the embedding model
-embedding_model = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=api_key)
+# Initialize models and embeddings
+try:
+    embedding_model = OpenAIEmbeddings(
+        model="text-embedding-3-small",
+        openai_api_key=OPENAI_API_KEY
+    )
+    
+    llm = ChatOpenAI(
+        model_name="gpt-4",
+        openai_api_key=OPENAI_API_KEY,
+        temperature=0.7
+    )
+except Exception as e:
+    logger.error(f"Error initializing models: {str(e)}")
+    raise
 
-# Function to create or load FAISS index
-def create_or_load_faiss_index(file_path, save_path):
-    if os.path.exists(os.path.join(save_path, "index.faiss")):
-        logging.info(f"Loading existing FAISS index from {save_path}")
-        return FAISS.load_local(save_path, embedding_model)
-    else:
-        logging.info(f"Creating new FAISS index for {file_path}")
-        with open(file_path, "rb") as file:
-            reader = PdfReader(file)
-            corpus = ''.join([p.extract_text() for p in reader.pages if p.extract_text()])
+class DocumentProcessor:
+    def __init__(self):
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=2000,
+            chunk_overlap=200
+        )
+        
+    def process_pdf(self, file_path: str) -> FAISS:
+        """Process PDF file and create FAISS index"""
+        try:
+            # Check if FAISS index already exists
+            index_path = f"faiss_index/{os.path.basename(file_path)}_index"
+            if os.path.exists(os.path.join(index_path, "index.faiss")):
+                logger.info(f"Loading existing index from {index_path}")
+                return FAISS.load_local(index_path, embedding_model)
+            
+            # Create new index
+            logger.info(f"Creating new index for {file_path}")
+            with open(file_path, "rb") as file:
+                pdf = PdfReader(file)
+                text = ' '.join(page.extract_text() for page in pdf.pages)
+                
+            chunks = self.text_splitter.split_text(text)
+            vectorstore = FAISS.from_texts(chunks, embedding_model)
+            
+            # Save index
+            os.makedirs(index_path, exist_ok=True)
+            vectorstore.save_local(index_path)
+            
+            return vectorstore
+        except Exception as e:
+            logger.error(f"Error processing PDF {file_path}: {str(e)}")
+            raise
 
-        splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
-        chunks = splitter.split_text(corpus)
+class QASystem:
+    def __init__(self, vectorstore: FAISS):
+        self.vectorstore = vectorstore
+        self.qa_chain = RetrievalQA.from_chain_type(
+            llm=llm,
+            retriever=vectorstore.as_retriever(
+                search_kwargs={"k": 3}
+            ),
+            return_source_documents=True
+        )
+    
+    def get_answer(self, query: str, context: str = "") -> str:
+        """Get answer for query with optional context"""
+        try:
+            full_query = f"{context} {query}".strip()
+            response = self.qa_chain({"query": full_query})
+            return response['result']
+        except Exception as e:
+            logger.error(f"Error getting answer: {str(e)}")
+            return "Xin lỗi, tôi không thể trả lời câu hỏi này lúc này."
 
-        vectors = FAISS.from_texts(chunks, embedding_model)
-        vectors.save_local(save_path)
-        return vectors
+# Initialize document processor and load documents
+processor = DocumentProcessor()
+qa_systems = {}
 
-# Create FAISS index for each PDF file
-file_paths = {
+# Define document paths
+DOCUMENTS = {
     "Vốn đầu tư": "data/vondautu.pdf",
     "Xây dựng": "data/xaydung.pdf"
 }
-faiss_indices = {}
-for menu_item, file_path in file_paths.items():
-    save_path = f"faiss_index/{menu_item}_index"
-    faiss_indices[menu_item] = create_or_load_faiss_index(file_path, save_path)
 
-# Flask app to provide an API
-app = Flask(__name__)
-
-@lru_cache(maxsize=1000)
-def get_embedding(text):
-    return embedding_model.embed_query(text)
-
-def hash_prompt(prompt: str) -> str:
-    return hashlib.md5(prompt.encode()).hexdigest()
-
-def load_json(file_name: str) -> Dict:
-    if not os.path.exists(file_name):
-        with open(file_name, "w") as f:
-            json.dump({}, f)
-    with open(file_name, "r") as f:
-        return json.load(f)
-
-def save_json(file_name: str, data: Dict):
-    with open(file_name, "w") as f:
-        json.dump(data, f)
-
-def check_prompt_caching(query, cache_file):
-    cache = load_json(cache_file)
-    query_hash = hash_prompt(query)
-    if query_hash in cache:
-        logging.info(f"Cache hit for query: {query}")
-        return cache[query_hash]
-    logging.info(f"Cache miss for query: {query}")
-    return None
-
-def generate_answer_with_rag(query, vectors, previous_queries, max_tokens=150):
-    llm = ChatOpenAI(model_name="gpt-4o", openai_api_key=api_key, max_tokens=max_tokens)
-    contextual_query = f"{previous_queries} {query}"
-    qa_chain = RetrievalQA.from_chain_type(llm, retriever=vectors.as_retriever(), return_source_documents=True)
-    result = qa_chain({"query": contextual_query})
-    return result['result']
+# Load all documents
+for topic, path in DOCUMENTS.items():
+    try:
+        vectorstore = processor.process_pdf(path)
+        qa_systems[topic] = QASystem(vectorstore)
+    except Exception as e:
+        logger.error(f"Error loading document {topic}: {str(e)}")
 
 @app.route('/answer', methods=['POST'])
-def get_answer():
-    data = request.get_json()
-    query = data.get('query')
-    selected_menu = data.get('selected_menu')
-    chat_history = data.get('chat_history', [])
-
-    if not query or not selected_menu:
-        return jsonify({"error": "Missing 'query' or 'selected_menu' in request."}), 400
-
-    vectors = faiss_indices.get(selected_menu)
-    if not vectors:
-        return jsonify({"error": f"No FAISS index found for menu '{selected_menu}'."}), 400
-
-    if chat_history:
-        previous_queries = ' '.join([f"User: {q}\nChatbot: {a}" for q, a in chat_history])
-    else:
-        previous_queries = ""
-
-    # Check cache first
-    cache_file = f"cache/{selected_menu.lower()}_cache.json"
-    cached_answer = check_prompt_caching(query, cache_file)
-    if cached_answer:
-        logging.info(f"Returning cached answer for query: {query}")
-        return jsonify({"answer": cached_answer})
-
-    # Generate answer
-    answer = generate_answer_with_rag(query, vectors, previous_queries, max_tokens=150)
-
-    # Save to cache
-    cache = load_json(cache_file)
-    query_hash = hash_prompt(query)
-    cache[query_hash] = answer
-    save_json(cache_file, cache)
-
-    response = {"answer": answer}
-    return jsonify(response)
+def answer():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        query = data.get('query')
+        selected_menu = data.get('selected_menu')
+        chat_history = data.get('chat_history', [])
+        
+        if not query or not selected_menu:
+            return jsonify({"error": "Missing required fields"}), 400
+            
+        if selected_menu not in qa_systems:
+            return jsonify({"error": "Invalid topic selected"}), 400
+            
+        # Build context from chat history
+        context = " ".join(
+            f"Q: {q} A: {a}" for q, a in chat_history[-3:]
+        ) if chat_history else ""
+        
+        # Get answer
+        qa_system = qa_systems[selected_menu]
+        answer = qa_system.get_answer(query, context)
+        
+        return jsonify({"answer": answer})
+        
+    except Exception as e:
+        logger.error(f"Error processing request: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", 5000))
